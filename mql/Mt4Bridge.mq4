@@ -2,6 +2,7 @@
 //|                                                    Mt4Bridge.mq4 |
 //|                                      Copyright 2022, Borja Gomez |
 //|                                              borjags87@gmail.com |
+//|               code based on https://github.com/dingmaotu/mql-zmq |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2022, Borja Gomez"
 #property link      "borjags87@gmail.com"
@@ -23,7 +24,7 @@ void OnInit()
    while(!IsStopped())
    {
       ZmqMsg request;
-      receiver.recv(request, true);// NON-BLOCKING
+      receiver.recv(request);
      
       if(request.size() > 0)
       {
@@ -39,7 +40,7 @@ void OnInit()
          Sleep(1000);
          
          ZmqMsg reply(zmq_ret);
-         sender.send(reply, true);// NON-BLOCKING
+         sender.send(reply);
       }
    }   
 }
