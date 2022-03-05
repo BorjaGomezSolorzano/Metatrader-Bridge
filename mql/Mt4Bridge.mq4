@@ -57,7 +57,6 @@ string InterpretZmqMessage(string& a[])
    else if(id == "OPEN_ORDER") zmq_ret = GetOpenOrderString(a);
    else if(id == "CLOSE_ORDER") CloseOrder(a);
    else if(id == "PRICES") zmq_ret = GetPricesString(a);
-   else if(id == "PRICE") zmq_ret = GetPriceString(a);
    else if(id == "EQUITY") zmq_ret = GetAccountInfoString();
    else if(id == "BID_ASK") zmq_ret = GetRatesString(a[1]);
    
@@ -91,14 +90,6 @@ string GetOpenOrderString(string& a[])
    int ticket = OrderSend(_symbol, _type, _lots, _price, _max_slippage, sl, tp, "", _magic);
    
    return IntegerToString(ticket);
-}
-
-
-string GetPriceString(string& a[])
-{
-   double price = iClose(a[1], StrToInteger(a[2]), StrToInteger(a[2]));
-   
-   return DoubleToString(price);
 }
 
 
