@@ -9,54 +9,66 @@ Created on Fri Feb 11 23:28:24 2022
 from time import sleep
 import numpy as np
 import logging
-import zmq
+import os
 
 
 class Client:
     
+    
+    
     def __init__(self):
-        self.context = zmq.Context()
+        folderName = "C:/Users/Borja/AppData/Roaming/MetaQuotes/Terminal/50CA3DFB510CC5A8F28B48D1BF2A5702/MQL4/Files/DWX"
         
-        self.sender = self.context.socket(zmq.PUSH)
-        self.sender.connect("tcp://localhost:5555")
+        self.filePathSend = folderName + "/DWX_SEND.txt";
+        self.filePathReceive = folderName + "/DWX_RECEIVE.txt";
+    
+    
+    def remote_send(self, _data):
+        with open(self.filePathReceive, "w") as f:
+            f.write(_data)
         
-        self.receiver = self.context.socket(zmq.PULL)
-        self.receiver.connect("tcp://localhost:5556")
-        
+        sleep(10)
+    
+    
+    def remote_recv(self):
+        data = None
+        if os.path.exists(self.filePathSend):
+            
+            with open(self.filePathSend, "r") as f:
+                data = f.read()
+                
+            os.remove(self.filePathSend)
+            
+        return data
+    
     
     def open_order(self, _symbol = "EURUSD", _lots = 0.01, _type = 0, _sl = 0, _tp = 0, 
                    _max_slippage = 0.1): #0: Buy, 1: Sell
         
         _send = "OPEN_ORDER;{0};{1};{2};{3};{4};{5}".format(_symbol, _type, _lots, \
-                                                _sl, _tp, _max_slippage).encode()
+                                                _sl, _tp, _max_slippage)
         
-        self.sender.send(_send)
+        self.remote_send(_send)
         
-        sleep(1)
+        message = self.remote_recv()
         
-        message = self.receiver.recv()
-        
-        logging.info(f'Open order {message.decode("utf-8")}')
+        logging.info(f'Open order {message}')
         
     
     def close_order(self, ticket, _symbol, _type, _lots, max_slippage):
         
         _send = "CLOSE_ORDER;{0};{1};{2};{3};{4}".format(ticket, _symbol, _type, _lots, \
-                                                max_slippage).encode()
+                                                max_slippage)
         
-        self.sender.send(_send)
+        self.remote_send(_send)
         
         logging.info(f'Close order {ticket}')
             
     
     def opened_orders(self):
-        self.sender.send(b"OPENED_ORDERS")
+        self.remote_send("OPENED_ORDERS")
         
-        sleep(1)
-        
-        message = self.receiver.recv()
-        
-        _opened = message.decode("utf-8")
+        _opened = self.remote_recv()
         
         if _opened == '': return []
         
@@ -85,70 +97,47 @@ class Client:
     
     
     def equity(self):
-        self.sender.send(b"EQUITY")
+        self.remote_send("EQUITY")
         
-        sleep(1)
+        message = self.remote_recv()
         
-        message = self.receiver.recv()
-        
-        return float(message.decode("utf-8"))
+        return float(message)
         
     
-    def prices(self, _symbol='USDJPY', _tf = 1, _start=1, _end=30):
+    def prices_interval(self, _symbol='USDJPY', _tf = 1, _start=1, _end=30):
         
-        _send = "PRICES;POSITION;{0};{1};{2};{3}".format(_symbol, _tf, _start, _end).encode()
+        _send = "PRICES_INTERVAL;POSITION;{0};{1};{2};{3}".format(_symbol, _tf, _start, _end)
         
-        self.sender.send(_send)
+        self.remote_send(_send)
         
-        sleep(1)
+        message = self.remote_recv()
         
-        message = self.receiver.recv()
-        
-        ps = message.decode("utf-8").split(";")
+        ps = message.split(";")
         
         return np.array([float(p) for p in ps]) if ps[0] != '' else  np.array([])
     
     
+    def prices_sampled(self, _symbol='USDJPY', _tf = 1, n=1, shift=30):
+        
+        _send = "PRICES_SAMPLED;{0};{1};{2};{3}".format(_symbol, _tf, n, shift)
+        
+        self.remote_send(_send)
+        
+        message = self.remote_recv()
+        
+        ps = message.split(";")
+        
+        return np.array([float(p) for p in ps]) if ps[0] != '' else  np.array([])
+        
+    
     def bid_ask(self, _symbol = 'EURUSD'):
-        _send = "BID_ASK;{0}".format(_symbol).encode()
+        _send = "BID_ASK;{0}".format(_symbol)
         
-        self.sender.send(_send)
+        self.remote_send(_send)
         
-        sleep(1)
+        message = self.remote_recv()
+
+        ba = message.split(";")
         
-        message = self.receiver.recv()
-
-        ba = message.decode("utf-8").split(";")
-        
-        return float(ba[0]), float(ba[1]) if len(ba) == 2 else 0, 0
-    
-    
-    def exit(self):
-        self.sender.close()
-        self.receiver.close()
-        self.context.term()
-            
-
-def test():
-    
-    client = Client()
-    
-    #client.close_order(ticket=197709057, _symbol='EURUSD', _type=0, _lots=0.01, max_slippage=0.1)
-    
-    #client.open_order()
-    
-    #print('Open orders:', client.opened_orders())
-    print('prices', client.prices(_symbol='GBPUSD'))
-    
-    '''
-    print('equity', client.equity())
-    print('bid/ask', client.bid_ask())
-    '''
-
-    client.exit()    
-    
-
-if __name__ == '__main__':
-    
-    test()
+        return float(ba[0]), float(ba[1])
     
