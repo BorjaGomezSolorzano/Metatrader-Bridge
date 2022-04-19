@@ -8,41 +8,68 @@
 #property link      "borjags87@gmail.com"
 #property version   "1.00"
 
-#include <Zmq/Zmq.mqh>
+input int MILLISECOND_TIMER = 25;
+
+string folderName = "DWX";
+
+string filePathSend = folderName + "/DWX_SEND.txt";
+string filePathReceive = folderName + "/DWX_RECEIVE.txt";
+
+
+bool WriteToFile(string text) {
+   int handle = FileOpen(filePathSend, FILE_WRITE|FILE_TXT);
+   if (handle == -1) return false;
+   
+   uint numBytesWritten = FileWriteString(handle, text);
+   FileClose(handle);
+   return numBytesWritten > 0;
+}
+
+
+void ResetFolder() {
+   FolderCreate(folderName);
+   FileDelete(filePathSend);
+   FileDelete(filePathReceive);
+}
 
 
 void OnInit()
 {
-   Context context("Mt4 Bridge");
-   
-   Socket receiver(context, ZMQ_PULL);
-   Socket sender(context, ZMQ_PUSH);
-   
-   receiver.bind("tcp://*:5555");
-   sender.bind("tcp://*:5556");
-   
-   while(!IsStopped())
-   {
-      ZmqMsg request;
-      receiver.recv(request);
+     EventSetMillisecondTimer(MILLISECOND_TIMER);
      
-      if(request.size() > 0)
-      {
-         string a[11];
-         
-         string dataStr = request.getData();
-         
-         ushort u_sep = StringGetCharacter(";", 0);
-         StringSplit(dataStr, u_sep, a);
-         
-         string zmq_ret = InterpretZmqMessage(a);
-         
-         Sleep(1000);
-         
-         ZmqMsg reply(zmq_ret);
-         sender.send(reply);
-      }
-   }   
+     ResetFolder();
+}
+
+
+void OnTimer()
+{
+   if (FileIsExist(filePathReceive))
+   {
+      int handle = FileOpen(filePathReceive, FILE_READ|FILE_TXT);  // FILE_COMMON | 
+      if (handle == -1) return;
+      if (handle == 0) return;
+      
+      string dataStr = "";
+      while(!FileIsEnding(handle)) dataStr += FileReadString(handle);
+      FileClose(handle);
+      FileDelete(filePathReceive);
+      
+      string a[11];
+      
+      ushort u_sep = StringGetCharacter(";", 0);
+      StringSplit(dataStr, u_sep, a);
+      
+      string zmq_ret = InterpretZmqMessage(a);
+      
+      WriteToFile(zmq_ret);
+   }
+}
+
+void OnDeinit(const int reason) 
+{
+   ResetFolder();
+   
+   EventKillTimer();
 }
 
 
@@ -56,12 +83,14 @@ string InterpretZmqMessage(string& a[])
    if(id == "OPENED_ORDERS") zmq_ret = GetAccountOrdersString();
    else if(id == "OPEN_ORDER") zmq_ret = GetOpenOrderString(a);
    else if(id == "CLOSE_ORDER") CloseOrder(a);
-   else if(id == "PRICES") zmq_ret = GetPricesString(a);
+   else if(id == "PRICES_INTERVAL") zmq_ret = GetPricesInterval(a);
+   else if(id == "PRICES_SAMPLED") zmq_ret = GetPricesSampled(a);
    else if(id == "EQUITY") zmq_ret = GetAccountInfoString();
    else if(id == "BID_ASK") zmq_ret = GetRatesString(a[1]);
    
    return zmq_ret;
 }
+
 
 void CloseOrder(string& a[])
 {
@@ -93,7 +122,27 @@ string GetOpenOrderString(string& a[])
 }
 
 
-string GetPricesString(string& a[])
+string GetPricesSampled(string& a[])
+{
+   string _symbol = a[1];
+   int timeframe = StrToInteger(a[2]);
+   int n = StrToInteger(a[3]);
+   int shift = StrToInteger(a[4]);
+   
+   string zmq_ret = "";
+   int c = 1;
+   for(int i = 0; i < n; i++) {
+      if(i > 0) zmq_ret += ";";
+      double close = iClose(_symbol, timeframe, c);
+      c += shift;
+      zmq_ret += DoubleToString(close, 5);
+   }
+   
+   return zmq_ret;
+}
+
+
+string GetPricesInterval(string& a[])
 {
    double price_a[];
    
