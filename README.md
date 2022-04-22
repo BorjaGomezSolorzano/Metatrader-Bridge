@@ -1,4 +1,4 @@
-# Metatrader5-Bridge
+# Metatrader-Bridge
 This repository contains a python client and a MQL4/5 server connector using text files
 
 The code implements the two side "PUSH-PULL" pattern, based on the following diagram:
