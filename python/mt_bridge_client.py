@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Feb 11 23:28:24 2022
-
 @author: borja
 """
 
@@ -16,20 +15,20 @@ import os
 class Client:
     
     
-    def __init__(self):
-        #folderName = "C:/Users/Borja/AppData/Roaming/MetaQuotes/Terminal/50CA3DFB510CC5A8F28B48D1BF2A5702/MQL4/Files/BRIDGE"
-        folderName = "/home/borja/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/DWX"
+    def __init__(self, folderName):
+        #folderName = "C:/Users/Borja/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/BRIDGE"
+        #folderName = "/home/borja/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/BRIDGE"
         
         self.filePathSend = folderName + "/SEND.txt";
         self.filePathReceive = folderName + "/RECEIVE.txt";
         self._encoding = 'utf-8'    
     
     
-    def remote_send(self, _data):
+    def remote_send(self, _data, secs_sleep=1):
         with codecs.open(self.filePathReceive,'w',encoding=self._encoding) as f:
             f.write(_data)
         
-        sleep(1)
+        sleep(secs_sleep)
     
     
     def read(self):
@@ -37,7 +36,7 @@ class Client:
             return f.read()
         
     
-    def remote_recv(self, _data_to_send):
+    def remote_recv(self, _data_to_send, secs_sleep=1):
         data = None
         
         i = 0
@@ -57,7 +56,7 @@ class Client:
                 if data is None or len(data) == 0:
                     os.remove(self.filePathSend)
                     
-                    self.remote_send(_data_to_send)
+                    self.remote_send(_data_to_send, secs_sleep)
                     
                     sleep(2)
                 
@@ -134,17 +133,17 @@ class Client:
         return float(message)
         
     
-    def prices_interval(self, _symbol='USDJPY', _tf = 'H4', _start=1, _end=30):
+    def prices_temp(self, _symbol, _tf, _start, _end, _type='PRICES_INTERVAL', secs_sleep=1):
         
-        _send = "PRICES_INTERVAL;POSITION;{0};{1};{2};{3}".format(_symbol, _tf, _start, _end)
+        _send = "{};{};{};{};{}".format(_type, _symbol, _tf, _start, _end)
         
-        self.remote_send(_send)
+        self.remote_send(_send, secs_sleep)
         
-        message = self.remote_recv(_send)
+        message = self.remote_recv(_send, secs_sleep)
         
         vs = message.split(";")
         
-        s = _end-_start+1
+        s = len(vs)
         
         prices = np.zeros(s, dtype=np.float32)
         ts = np.zeros(s, dtype=np.int64)
@@ -157,9 +156,14 @@ class Client:
         return ts, prices
     
     
-    def prices_sampled(self, _symbol='USDJPY', _tf = 1, n=1, shift=30):
+    def prices_interval(self, _symbol, _tf, _start, _end, secs_sleep=1):
         
-        _send = "PRICES_SAMPLED;{0};{1};{2};{3}".format(_symbol, _tf, n, shift)
+        return self.prices_temp(_symbol, _tf, _start, _end, _type='PRICES_INTERVAL', secs_sleep=1)
+    
+    
+    def prices_sampled(self, _symbol, _tf, times_str):
+        
+        _send = "PRICES_SAMPLED;{0};{1};{2}".format(_symbol, _tf, times_str)
         
         self.remote_send(_send)
         
@@ -180,4 +184,3 @@ class Client:
         ba = message.split(";")
         
         return float(ba[0]), float(ba[1])
-    
