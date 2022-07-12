@@ -181,8 +181,10 @@ string GetPricesSampled(string& a[])
       datetime time = StringToTime(time_str);
       int bar_index=iBarShift(_symbol, tf, time, exact);
       double close = iClose(_symbol, tf, bar_index);
+      double low = iLow(_symbol, tf, bar_index);
+      double high = iHigh(_symbol, tf, bar_index);
       
-      zmq_ret += DoubleToString(close, 5);
+      zmq_ret += DoubleToString(low, 5) + "," + DoubleToString(high, 5) + "," + DoubleToString(close, 5);
    }
    
    return zmq_ret;
