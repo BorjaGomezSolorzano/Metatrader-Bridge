@@ -169,9 +169,21 @@ class Client:
         
         message = self.remote_recv(_send)
         
-        ps = message.split(";")
+        vs = message.split(";")
         
-        return np.array([float(p) for p in ps]) if ps[0] != '' else  np.array([])
+        s = len(vs)
+        
+        low = np.zeros(s, dtype=np.float32)
+        high = np.zeros(s, dtype=np.float32)
+        close = np.zeros(s, dtype=np.float32)
+        for i, v in enumerate(vs):
+            spt_v = v.split(",")
+            
+            low[i] = float(spt_v[0])
+            high[i] = float(spt_v[1])
+            close[i] = float(spt_v[2])
+        
+        return low, high, close
         
     
     def bid_ask(self, _symbol = 'EURUSD'):
