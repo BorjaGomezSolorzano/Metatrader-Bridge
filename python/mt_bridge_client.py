@@ -49,7 +49,16 @@ class Client:
             
             i = 0
             while i < 5:
-                data = self.read()
+                try:
+                    data = self.read()
+                except PermissionError:
+                    logging.error('PERMISSION ERROR')
+                    
+                    sleep(2)
+                    
+                    i += 1
+                    
+                    continue
                 
                 if (data is not None and len(data) > 0): break 
                 
@@ -63,6 +72,8 @@ class Client:
                 i += 1
             
             os.remove(self.filePathSend)
+        
+        if data is None or len(data) == 0: print('NO DATA')
         
         return data
     
@@ -161,11 +172,11 @@ class Client:
         return self.prices_temp(_symbol, _tf, _start, _end, _type='PRICES_INTERVAL', secs_sleep=1)
     
     
-    def prices_sampled(self, _symbol, _tf, times_str):
+    def prices_sampled(self, _symbol, _tf, times_str, secs_sleep=0.1):
         
         _send = "PRICES_SAMPLED;{0};{1};{2}".format(_symbol, _tf, times_str)
         
-        self.remote_send(_send)
+        self.remote_send(_send, secs_sleep)
         
         message = self.remote_recv(_send)
         
