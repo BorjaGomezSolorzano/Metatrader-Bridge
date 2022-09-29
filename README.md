@@ -1,5 +1,5 @@
 # Metatrader-Bridge
-This repository contains a python client and a MQL4/5 server connector using text files
+This repository contains a python client and a MQL5 server connector using text files
 
 The code implements the two side "PUSH-PULL" pattern, based on the following diagram:
 
@@ -14,7 +14,7 @@ message, PUSHes the answer in another file binded in this case to the receiver P
 ## Methods implemented.
 
 1. Open Order. Opens an order for an instrument
-2. Close Order. Closes an order based on the ticket id
+2. Close Order. Closes Partially or Totally an order based on the ticket id
 3. Opened Orders. Get the opened orders info.
 4. Equity. Get the trading account equity
 5. Prices. Get the close bar prices based on the position (0 is the current bar).
