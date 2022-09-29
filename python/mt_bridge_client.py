@@ -3,26 +3,49 @@
 """
 Created on Fri Feb 11 23:28:24 2022
 @author: borja
+
+https://github.com/BorjaGomezSolorzano/Metatrader-Bridge
 """
 
+from datetime import datetime, timedelta
 from time import sleep
 import numpy as np
 import logging
 import codecs
+import pytz
 import os
+
 
 
 class Client:
     
+    local_tz = pytz.timezone("America/New_York")
+    epoch = pytz.timezone("UTC").localize(datetime.utcfromtimestamp(0))
     
-    def __init__(self, folderName):
-        #folderName = "C:/Users/Borja/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/BRIDGE"
-        #folderName = "/home/borja/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/BRIDGE"
+    offset = timedelta(seconds=3_600)
+    
+    _3H_secs = 3 * 60 * 60
+    _2H_secs = 2 * 60 * 60
+    
+    
+    def __init__(self):
+        folderName = "C:/Users/Borja/AppData/Roaming/MetaQuotes/Terminal/FAA514E52C3E4D1EE11C384C6086D979/MQL5/Files/BRIDGE"
         
         self.filePathSend = folderName + "/SEND.txt";
         self.filePathReceive = folderName + "/RECEIVE.txt";
         self._encoding = 'utf-8'    
     
+    
+    def get_server_time_str(self, t_utc):
+        dt_utc = datetime.utcfromtimestamp(t_utc)    
+        td1 = self.local_tz.localize(dt_utc).dst()
+        
+        t_gmt3 = t_utc + (self._3H_secs if td1 == self.offset else self._2H_secs)
+        
+        dt = datetime.utcfromtimestamp(t_gmt3)
+        
+        return dt.strftime("%Y.%m.%d %H:%M:%S")
+
     
     def remote_send(self, _data, secs_sleep=1):
         with codecs.open(self.filePathReceive,'w',encoding=self._encoding) as f:
@@ -73,16 +96,16 @@ class Client:
             
             os.remove(self.filePathSend)
         
-        if data is None or len(data) == 0: print('NO DATA')
+        if data is None or len(data) == 0: logging.info('NO DATA')
         
         return data
     
     
-    def open_order(self, _symbol = "EURUSD", _lots = 0.01, _type = 0, _sl = 0, _tp = 0, 
-                   _max_slippage = 0.1): #0: Buy, 1: Sell
-        
-        _send = "OPEN_ORDER;{0};{1};{2};{3};{4};{5}".format(_symbol, _type, _lots, \
-                                                _sl, _tp, _max_slippage)
+    def open_order(self, _symbol = "EURUSD", _lots = 0.01, _price=0.0, _type = 0, _sl = 0, _tp = 0, 
+                   _max_slippage = 0.1): #0: Buy, 1: Sell, 2: Buy limit, 3: Sell limit, 4: Buy Stop, 5: Sell Stop
+    
+        _send = "OPEN_ORDER;{0};{1};{2};{3};{4};{5};{6}".format(_symbol, _type, _lots, _price, \
+                                                                _sl, _tp, _max_slippage)
         
         self.remote_send(_send)
         
@@ -91,44 +114,37 @@ class Client:
         logging.info(f'Open order {message}')
         
     
-    def close_order(self, ticket, _symbol, _type, _lots, max_slippage):
+    def close_order(self, ticket, _lots):
         
-        _send = "CLOSE_ORDER;{0};{1};{2};{3};{4}".format(ticket, _symbol, _type, _lots, \
-                                                max_slippage)
+        _send = "CLOSE_ORDER;{0};{1}".format(ticket, _lots)
         
         self.remote_send(_send)
         
         logging.info(f'Close order {ticket}')
-            
+        
     
     def opened_orders(self):
+        '''
+        OrderTicket: 0, MagicNumber: 1, OrderSymbol: 2, OrderLots: 3, OrderType: 4, OpenPrice: 5
+        OpenTime: 6, StopLoss: 7, TakeProfit: 8, Profit: 9, Comment: 10
+        '''
+        
         _send = "OPENED_ORDERS"
         
         self.remote_send(_send)
         
         _opened = self.remote_recv(_send)
         
-        if _opened == '': return []
-        
-        orders_str = _opened.split(';')
-        
         orders = []
-        for o_str in orders_str:
-            
+        
+        if _opened == '': return orders
+        
+        for o_str in _opened.split(';'):
             o = o_str.split(',')
             
             orders.append( (
-                int(o[0]), #OrderTicket
-                int(o[1]), #MagicNumber
-                o[2], #OrderSymbol
-                float(o[3]), #OrderLots
-                int(o[4]), #OrderType
-                float(o[5]), #OpenPrice
-                int(o[6]), #OpenTime
-                float(o[7]), #StopLoss
-                float(o[8]), #TakeProfit
-                float(o[9]), #Profit
-                o[10] #Comment
+                int(o[0]), int(o[1]), o[2], float(o[3]), int(o[4]), float(o[5]), 
+                int(o[6]), float(o[7]), float(o[8]), float(o[9]), o[10] 
                 ) )
         
         return orders
@@ -172,7 +188,9 @@ class Client:
         return self.prices_temp(_symbol, _tf, _start, _end, _type='PRICES_INTERVAL', secs_sleep=1)
     
     
-    def prices_sampled(self, _symbol, _tf, times_str, secs_sleep=0.1):
+    def prices_sampled(self, _symbol, _tf, ts, secs_sleep=0.1):
+        
+        times_str = ','.join([self.get_server_time_str(t) for t in ts])
         
         _send = "PRICES_SAMPLED;{0};{1};{2}".format(_symbol, _tf, times_str)
         
