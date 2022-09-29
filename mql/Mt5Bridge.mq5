@@ -4,11 +4,17 @@
 //|                                              borjags87@gmail.com |
 //+------------------------------------------------------------------+
 
+#include <Trade\PositionInfo.mqh>
+#include <Trade\Trade.mqh>
+#include <Trade\SymbolInfo.mqh>
+
 #property copyright "Copyright 2022, Borja Gomez"
 #property link      "borjags87@gmail.com"
 #property version   "1.00"
 
 input int MILLISECOND_TIMER = 25;
+
+CTrade  trade;
 
 string folderName = "BRIDGE";
 
@@ -38,6 +44,7 @@ void ResetFolder() {
 
 void OnInit()
 {
+     
      EventSetMillisecondTimer(MILLISECOND_TIMER);
      
      ResetFolder();
@@ -104,9 +111,11 @@ void CloseOrder(string& a[])
 {  
    MqlTradeResult result={};
    MqlTradeRequest request={};
-   request.order=StringToInteger(a[1]);
-   request.action=TRADE_ACTION_REMOVE;
-   OrderSend(request, result);
+   
+   int ticket = StringToInteger(a[1]);
+   double lotsToClose = StringToDouble(a[2]);
+   
+   trade.PositionClosePartial(ticket, lotsToClose);
 }
 
 
@@ -230,24 +239,25 @@ string GetAccountOrdersString()
    string zmq_ret = "";
    int j = 0;
    ulong order_ticket;
-   for(int i=0; i<OrdersTotal(); i++) {
-      if((order_ticket=OrderGetTicket(i))<=0) continue;
+   
+   for(int i=PositionsTotal()-1; i>=0; i--) {
+      if((order_ticket=PositionGetTicket(i))<=0) continue;
        
       if (j > 0) zmq_ret += ";";
       
       j += 1;
       
-      zmq_ret += IntegerToString(OrderGetInteger(ORDER_TICKET)) +
-                 "," + IntegerToString(OrderGetInteger(ORDER_MAGIC)) + 
-                 "," + OrderGetString(ORDER_SYMBOL) + 
-                 "," + DoubleToString(OrderGetDouble(ORDER_VOLUME_INITIAL)) + 
-                 "," + IntegerToString(OrderGetInteger(ORDER_TYPE)) + 
-                 "," + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN)) + 
-                 "," + IntegerToString(OrderGetInteger(ORDER_TIME_SETUP)) + 
-                 "," + DoubleToString(OrderGetDouble(ORDER_SL)) + 
-                 "," + DoubleToString(OrderGetDouble(ORDER_TP)) + 
+      zmq_ret += IntegerToString(PositionGetInteger(POSITION_TICKET)) +
+                 "," + IntegerToString(PositionGetInteger(POSITION_MAGIC)) + 
+                 "," + PositionGetString(POSITION_SYMBOL) + 
+                 "," + DoubleToString(PositionGetDouble(POSITION_VOLUME)) + 
+                 "," + IntegerToString(PositionGetInteger(POSITION_TYPE)) + 
+                 "," + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN)) + 
+                 "," + IntegerToString(PositionGetInteger(POSITION_TIME)) + 
+                 "," + DoubleToString(PositionGetDouble(POSITION_SL)) + 
+                 "," + DoubleToString(PositionGetDouble(POSITION_TP)) + 
                  "," + DoubleToString(0.0) + 
-                 "," + OrderGetString(ORDER_COMMENT);
+                 "," + PositionGetString(POSITION_COMMENT);
     }
     
     return zmq_ret;
