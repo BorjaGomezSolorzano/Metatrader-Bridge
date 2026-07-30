@@ -11,8 +11,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from collections import defaultdict
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from time import sleep, monotonic
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import numpy.typing as npt
@@ -45,7 +46,7 @@ COMMENT=10
 
 class Socket:
 
-    def __init__(self, port:int=5555):
+    def __init__(self, port:int=7777):
         # Only one context shared
         self.port = port
         self.context = zmq.Context.instance()
@@ -142,7 +143,16 @@ class Client:
         return orders
 
 
-    def open_order(self, symbol:str, lots:float, price:float, type_:int, sl:float, tp:float, expire_time:int, comment:str, max_slippage:int)->int|None:
+    def open_order(self, symbol:str, 
+                         lots:float, 
+                         price:float, 
+                         type_:int, 
+                         sl:float, 
+                         tp:float, 
+                         expire_time:int, 
+                         comment:str, 
+                         max_spread:int,
+                         max_deviation:int)->int|None:
         """
         open market or pending order
 
@@ -155,15 +165,34 @@ class Client:
             tp (float): tp price or 0 if not
             expire_time (not implemented)
             comment (str): order comment (31 characters max)
-            max_slippage (int): max slippage in pips
+            max_spread (int): maximum spread in points
+            max_deviation (int): maximum execution deviation in points
         
         return:
             (int) order ticket
         """
+
+        if type_ in {BUY, BUY_LIMIT, BUY_STOP}:
+            reference_price = price or (self.current_price('ASK', symbol) if sl or tp else 0)
+            stops_are_invalid = (sl != 0 and sl >= reference_price) or (tp != 0 and tp <= reference_price)
+        elif type_ in {SELL, SELL_LIMIT, SELL_STOP}:
+            reference_price = price or (self.current_price('BID', symbol) if sl or tp else 0)
+            stops_are_invalid = (sl != 0 and sl <= reference_price) or (tp != 0 and tp >= reference_price)
+        else:
+            reference_price = price
+            stops_are_invalid = False
+
+        if stops_are_invalid:
+            logger.error(
+                'STOPS BADLY PLACED symbol=%s type=%d price=%.4f sl=%.4f tp=%.4f',
+                symbol, type_, reference_price, sl, tp,
+            )
+            return None
+
         # Throttle by symbol
         self._throttle_symbol(symbol)
 
-        x = self.sender.remote_recv(query:=f'OPEN_ORDER;{symbol};{type_};{lots};{price};{sl};{tp};{comment};{max_slippage}')
+        x = self.sender.remote_recv(query:=f'OPEN_ORDER;{symbol};{type_};{lots};{price};{sl};{tp};{comment};{max_spread};{max_deviation}')
         try:
             logger.info('OPEN ticket=%d, symbol=%s, comment=%s, type=%d, sl=%.4f, tp=%f, price=%.4f, lots=%.2f', 
                         ticket:=int(x), symbol, comment, type_, sl, tp, price, lots)
@@ -234,9 +263,13 @@ class Client:
             sl (float): sl price or 0 if not
             tp (float): tp price or 0 if not
         """
-        if self.sender.remote_recv("MODIFY_SL_TP;{0};{1};{2}".format(ticket, sl, tp)) == '1':
+        success = self.sender.remote_recv(
+            "MODIFY_SL_TP;{0};{1};{2}".format(ticket, sl, tp)
+        ) == '1'
+        if success:
             logger.info('MODIFY SL/TP %d %.4f %.4f', ticket, sl, tp)
         else: logger.error('COULD NOT MODIFY SL/TP ticket=%d sl=%.4f tp=%.4f', ticket, sl, tp)
+        return success
 
 
     def equity(self)->float:
@@ -264,42 +297,77 @@ class Client:
             dts (list[datetime]): list of datetimes to query in server timezone (la misma fecha que la barra correspondiente de metatrader)
         
         return:
-            (npt.NDArray[np.float64]) array of prices: <'LOW', 'HIGH', 'CLOSE', 'OPEN'> sorted by time asc
+            (npt.NDArray[np.float64]) array of data:
+            <'DATE_MS', 'LOW', 'HIGH', 'CLOSE', 'OPEN'> sorted by time asc
         """
 
         send = "{0};{1};{2};{3}".format('ALL0', _symbol, _tf, ','.join([dt.strftime("%Y.%m.%d %H:%M:%S") for dt in dts]))
         
-        a = np.zeros( (n:=len(dts), 4), np.float32)
-        
-        if n != len(_spt:=self.sender.remote_recv(send).split(',')): return a
-        
-        for i in range(n):
-            if len(_spt1:=_spt[i].split(';')) != 4: return a
-            
-            for j in range(4):
-                try: a[i][j] = float(_spt1[j])
-                except ValueError:
-                    logger.error('{} IS NOT A NUMBER {} {}'.format(('LOW', 'HIGH', 'CLOSE', 'OPEN')[j], _symbol, _tf))
-                    return a
-        return a
+        a = np.zeros((n := len(dts), 5), np.float64)
+        values = np.fromstring(
+            self.sender.remote_recv(send).replace(',', ';'), dtype=np.float64, sep=';'
+        )
+        if values.size != n * 5:
+            logger.error('INVALID PRICE DATA %s %s', _symbol, _tf)
+            return a
+        return values.reshape(n, 5)
     
-    def get_lastn_ohlc(self, _symbol:str, _tf:str, n:int)->npt.NDArray[np.float64]:
-        send = "{0};{1};{2};{3}".format('LAST_NOHLC', _symbol, n, _tf)
+    def get_lastn_ohlc(self, _symbol:str, _tf:str, n:int, dt:datetime)->npt.NDArray[np.float64]:
+        utc_dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+        is_us_summer_time = bool(utc_dt.astimezone(ZoneInfo("America/New_York")).dst())
+        server_dt = utc_dt + timedelta(hours=3 if is_us_summer_time else 2)
+        send = "{0};{1};{2};{3};{4}".format(
+            'LAST_NOHLC', _symbol, _tf, n, server_dt.strftime("%Y.%m.%d %H:%M:%S")
+        )
         
-        a = np.zeros( (n, 5), np.float32)
+        # A Unix timestamp cannot be represented accurately enough with float32;
+        # losing seconds here can align an H1 bar with the previous hour.
+        a = np.zeros((n, 5), np.float64)
         
         recv = self.sender.remote_recv(send)
-        if n != len(_spt:=recv.split(';')): return a
-        
-        for i in range(n):
-            if len(_spt1:=_spt[i].split(',')) != 5: return a
-            
-            for j in range(5):
-                try: a[i][j] = float(_spt1[j])
+
+        fields = recv.strip(',;').replace(',', ';').split(';')
+        if len(fields) != n * 5:
+            logger.error('INVALID OHLC DATA %s %s', _symbol, _tf)
+            return a
+
+        values = np.empty(n * 5, dtype=np.float64)
+        try:
+            values.reshape(n, 5)[:, 1:] = np.asarray(fields, dtype=object).reshape(n, 5)[:, 1:]
+            for index, value in enumerate(fields[::5]):
+                try:
+                    values[index * 5] = float(value)
                 except ValueError:
-                    logger.error('{} IS NOT A NUMBER {} {}'.format(('LOW', 'HIGH', 'CLOSE', 'OPEN')[j], _symbol, _tf))
-                    return a
-        return a
+                    values[index * 5] = datetime(
+                        int(value[0:4]), int(value[5:7]), int(value[8:10]),
+                        int(value[11:13]), int(value[14:16]),
+                        int(value[17:19]) if len(value) >= 19 else 0,
+                        tzinfo=timezone.utc,
+                    ).timestamp()
+        except (TypeError, ValueError, IndexError):
+            logger.error('INVALID OHLC DATA %s %s', _symbol, _tf)
+            return a
+
+        timestamps = values[::5]
+        years = timestamps.astype('datetime64[s]').astype('datetime64[Y]')
+        summer_time = np.zeros(timestamps.size, dtype=bool)
+        for year_value in np.unique(years):
+            year = int(year_value.astype(int)) + 1970
+            march_1 = datetime(year, 3, 1, tzinfo=timezone.utc)
+            november_1 = datetime(year, 11, 1, tzinfo=timezone.utc)
+            second_sunday_march = 8 + (6 - march_1.weekday()) % 7
+            first_sunday_november = 1 + (6 - november_1.weekday()) % 7
+            start = datetime(year, 3, second_sunday_march, 10, tzinfo=timezone.utc).timestamp()
+            end = datetime(year, 11, first_sunday_november, 9, tzinfo=timezone.utc).timestamp()
+            in_year = years == year_value
+            summer_time[in_year] = (timestamps[in_year] >= start) & (timestamps[in_year] < end)
+
+        timestamps -= np.where(summer_time, 3 * 3600, 2 * 3600)
+        timestamps *= 1000
+        rows = values.reshape(n, 5)
+        if n > 1 and rows[0, 0] > rows[-1, 0]:
+            return rows[::-1].copy()
+        return rows
     
 
     def get_spread(self, _symbol:str)->int|None:
@@ -335,7 +403,6 @@ class Client:
         
         if (contract_size := float(spt[0])) == 0: logger.error('NO CONTRACT SIZE %s', symbol)
         if (min_lots := float(spt[1])) == 0: logger.error('NO MIN LOTS %s', symbol)
-        logger.info('%s CONTRACT SIZE: %.4f, MIN LOTS: %.4f', symbol, contract_size, min_lots)
 
         return {'size': contract_size, 'min_lots': min_lots}
 
@@ -369,9 +436,6 @@ class Client:
     def equity_async(self,  *args, **kwargs):
         return self._pool.submit(self.equity, *args, **kwargs)
     
-    def equity_async(self,  *args, **kwargs):
-        return self._pool.submit(self.equity, *args, **kwargs)
-    
     def symbol_info_async(self, *args, **kwargs):
         return self._pool.submit(self.symbol_info, *args, **kwargs)
 
@@ -395,16 +459,16 @@ if __name__ == '__main__':
     client = Client(sock, max_workers=8)
 
     # lanzar varias órdenes a la vez
-    # symbol, lots, price, type_, sl, tp, expire_time, comment, max_slippage
+    # symbol, lots, price, type_, sl, tp, expire_time, comment, max_spread, max_deviation
 
     futures = [
-        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A", 5e3),
-        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A1", 5e3),
-        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A2", 5e3),
-        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B", 10e3),
-        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B2", 10e3),
-        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B3", 10e3),
-        client.open_order_async("EURUSD", 0.02, 0, 0, 0, 0, 0, "test C", 2e3),
+        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A", 10000, 10000),
+        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A1", 10000, 10000),
+        client.open_order_async("XAUUSD", 0.01, 0, 0, 0, 0, 0, "test A2", 10000, 10000),
+        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B", 10000, 10000),
+        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B2", 10000, 10000),
+        client.open_order_async("NDX",   0.01,  0, 1, 0, 0, 0, "test B3", 10000, 10000),
+        client.open_order_async("EURUSD", 0.02, 0, 0, 0, 0, 0, "test C", 10000, 10000),
     ]
 
     # recoger resultados
