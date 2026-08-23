@@ -34,21 +34,138 @@ string InterpretZmqMessage(string& a[])
    return zmq_ret;
 }
 
+
+string GetDayName(ENUM_DAY_OF_WEEK day)
+{
+   switch(day)
+   {
+      case SUNDAY:    return "SUN";
+      case MONDAY:    return "MON";
+      case TUESDAY:   return "TUE";
+      case WEDNESDAY: return "WED";
+      case THURSDAY:  return "THU";
+      case FRIDAY:    return "FRI";
+      case SATURDAY:  return "SAT";
+   }
+
+   return "";
+}
+
+
+string GetTradingHoursForDay(
+   string symbol,
+   ENUM_DAY_OF_WEEK day
+)
+{
+   string sessions = "";
+   uint session_index = 0;
+
+   while(true)
+   {
+      datetime from;
+      datetime to;
+
+      if(!SymbolInfoSessionTrade(
+            symbol,
+            day,
+            session_index,
+            from,
+            to))
+      {
+         break;
+      }
+
+      string from_str = TimeToString(
+         from,
+         TIME_MINUTES
+      );
+
+      string to_str = TimeToString(
+         to,
+         TIME_MINUTES
+      );
+
+      if(sessions != "")
+         sessions += "|";
+
+      sessions += from_str + "-" + to_str;
+
+      session_index++;
+   }
+
+   if(sessions == "")
+      return "CLOSED";
+
+   return sessions;
+}
+
+
+string GetTradingHours(string symbol)
+{
+   string result = "";
+
+   for(int d = SUNDAY; d <= SATURDAY; d++)
+   {
+      ENUM_DAY_OF_WEEK day =
+         (ENUM_DAY_OF_WEEK)d;
+
+      string sessions =
+         GetTradingHoursForDay(
+            symbol,
+            day
+         );
+
+      if(result != "")
+         result += ";";
+
+      result +=
+         GetDayName(day)
+         + "="
+         + sessions;
+   }
+
+   return result;
+}
+
+
 string GetSymbolInfo(string symbol)
 {
-   double cs = 0.0;
+   double cs   = 0.0;
    double vmin = 0.0;
-   if(!SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE, cs))
+
+   if(!SymbolInfoDouble(
+         symbol,
+         SYMBOL_TRADE_CONTRACT_SIZE,
+         cs))
    {
-      PrintFormat("No se pudo leer CONTRACT_SIZE de %s. Error=%d", symbol, GetLastError());
+      PrintFormat(
+         "No se pudo leer CONTRACT_SIZE de %s. Error=%d",
+         symbol,
+         GetLastError()
+      );
    }
-   
-   if(!SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN, vmin)) 
+
+   if(!SymbolInfoDouble(
+         symbol,
+         SYMBOL_VOLUME_MIN,
+         vmin))
    {
-      PrintFormat("No se pudo leer VOLUME_MIN de %s. Error=%d", symbol, GetLastError());
+      PrintFormat(
+         "No se pudo leer VOLUME_MIN de %s. Error=%d",
+         symbol,
+         GetLastError()
+      );
    }
-   
-   return DoubleToString(cs, 4)+","+DoubleToString(vmin, 4);
+
+   string trading_hours =
+      GetTradingHours(symbol);
+
+   return
+      DoubleToString(cs, 4)
+      + ","
+      + DoubleToString(vmin, 4)
+      + ","
+      + trading_hours;
 }
 
 bool str_eq(string a, string b)
