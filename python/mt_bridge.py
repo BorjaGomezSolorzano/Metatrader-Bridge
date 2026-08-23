@@ -386,25 +386,71 @@ class Client:
             try: return int(message)
             except ValueError: logger.error('SPREAD IS NOT A NUMBER {}'.format(_symbol))
 
-    
-    def symbol_info(self, symbol:str)->dict[str, float]:
+
+    def symbol_info(self, symbol: str, weekday: int | None = None) -> dict:
         """
-        get mt5 symbol info
+        Get MT5 symbol info.
 
-        args
-            symbol (str): 
+        Args:
+            symbol: MetaTrader symbol.
+            weekday: Day of the week (0=Sunday, 1=Monday, 2=Tuesday,
+                3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday), or None.
 
-        return:
-            (dict[str, float]): <size, min_lots>
+        Returns:
+            {
+                'size': float,
+                'min_lots': float,
+                'trading_hours': {
+                    'SUN': [],
+                    'MON': [{'from': '01:01', 'to': '23:59'}],
+                    ...
+                }
+            }
+
+            If ``weekday`` is provided, ``trading_hours`` contains only the
+            sessions for that MetaTrader weekday instead of the weekly map.
         """
 
-        str_ = self.sender.remote_recv("SYMBOL_INFO;{0}".format(symbol))
+        command = "SYMBOL_INFO;{0}".format(symbol)
+        str_ = self.sender.remote_recv(command)
+
         spt = str_.split(',')
-        
-        if (contract_size := float(spt[0])) == 0: logger.error('NO CONTRACT SIZE %s', symbol)
-        if (min_lots := float(spt[1])) == 0: logger.error('NO MIN LOTS %s', symbol)
 
-        return {'size': contract_size, 'min_lots': min_lots}
+        contract_size = float(spt[0])
+        min_lots = float(spt[1])
+
+        if contract_size == 0:
+            logger.error(
+                'NO CONTRACT SIZE %s',
+                symbol
+            )
+
+        if min_lots == 0:
+            logger.error(
+                'NO MIN LOTS %s',
+                symbol
+            )
+
+        trading_hours = {}
+        if len(spt) > 2:
+            for day_entry in spt[2].split(';'):
+                day, hours_str = day_entry.split('=', 1)
+                sessions = []
+                if hours_str != "CLOSED":
+                    for session in hours_str.split('|'):
+                        from_, to_ = session.split('-', 1)
+                        sessions.append({'from': from_, 'to': to_})
+                trading_hours[day] = sessions
+
+        if weekday is not None:
+            day_names = ('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')
+            trading_hours = trading_hours[day_names[weekday]]
+
+        return {
+            'size': contract_size,
+            'min_lots': min_lots,
+            'trading_hours': trading_hours
+        }
 
 
     # --------- async versions: parallel executed returns future -----------------
@@ -454,6 +500,7 @@ class Client:
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
 
     sock = Socket()
     client = Client(sock, max_workers=8)
@@ -474,6 +521,6 @@ if __name__ == '__main__':
     # recoger resultados
     for fut in as_completed(futures):
         ticket = fut.result()
-        print("ticket:", ticket)
+        logger.info("ticket: %s", ticket)
 
     client.close()
